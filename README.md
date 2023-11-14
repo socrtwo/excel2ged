@@ -1,10 +1,10 @@
 # excel2ged
-Get newer versions at SourceForge_net.txt
+New versions are also available at SourceForge_net
 
-Newer versions of Excel2GED are available at: 
+New versions of Excel2GED are also available at: 
 
 https://sourceforge.net/projects/excel2ged/ 
 https://sourceforge.net/projects/excel2ged/files/
 https://sourceforge.net/projects/excel2ged/files/excel2ged_v3/ 
 
-Enjoy! 
+Enjoy!
