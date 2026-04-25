@@ -1,0 +1,101 @@
+name: Deploy Pages (versioned)
+
+on:
+  push:
+    branches: [ main, master ]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  WEB_DIR: web
+  ASSET_NAME: ""
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Assemble versioned site
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p public
+        if [ ! -d "$WEB_DIR" ]; then
+          echo "WEB_DIR '$WEB_DIR' not found" >&2; exit 1
+        fi
+        mkdir -p public/main
+        cp -r "$WEB_DIR"/. public/main/
+
+        newest_dir=""; newest_tag=""
+        if [ -n "${ASSET_NAME:-}" ]; then
+          mapfile -t releases < <(gh api \
+            "/repos/${{ github.repository }}/releases?per_page=100" --paginate \
+            --jq ".[] | select(.draft==false) | [.tag_name, (.assets[]? | select(.name==\"$ASSET_NAME\") | .browser_download_url)] | @tsv" \
+            || true)
+          for line in "${releases[@]:-}"; do
+            [ -z "$line" ] && continue
+            tag=$(printf '%s' "$line" | cut -f1)
+            url=$(printf '%s' "$line" | cut -f2)
+            [ -z "$tag" ] || [ -z "$url" ] && continue
+            dest="public/$tag"
+            mkdir -p "$dest"
+            if curl -fsSL "$url" -o "/tmp/web-$tag.zip"; then
+              unzip -q "/tmp/web-$tag.zip" -d "$dest"
+              [ -z "$newest_dir" ] && newest_dir="$dest" && newest_tag="$tag"
+            else
+              rmdir "$dest" 2>/dev/null || true
+            fi
+          done
+        fi
+
+        if [ -n "$newest_dir" ]; then
+          cp -r "$newest_dir"/. public/
+          mkdir -p public/latest && cp -r "$newest_dir"/. public/latest/
+        else
+          cp -r "$WEB_DIR"/. public/
+          mkdir -p public/latest && cp -r "$WEB_DIR"/. public/latest/
+        fi
+
+        current_label="${newest_tag:-main}"
+        {
+          printf '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+          printf '<meta name="viewport" content="width=device-width, initial-scale=1">'
+          printf '<title>All Versions</title><style>body{font-family:system-ui,sans-serif;'
+          printf 'max-width:560px;margin:40px auto;padding:20px;background:#0f0322;color:#f5f3ff}'
+          printf 'a{display:flex;justify-content:space-between;padding:14px 18px;margin:10px 0;'
+          printf 'text-decoration:none;color:#f5f3ff;background:rgba(20,10,40,.55);'
+          printf 'border:1px solid rgba(255,255,255,.1);border-radius:14px}'
+          printf 'a:hover{border-color:#7c3aed}h1{background:linear-gradient(90deg,#ff2e93,#22d3ee);'
+          printf '-webkit-background-clip:text;-webkit-text-fill-color:transparent}</style></head><body>'
+          printf '<h1>All Versions</h1>'
+          printf '<a href="./">Latest (%s)</a><a href="./main/">main</a>' "$current_label"
+        } > public/versions.html
+        for dir in public/v*/; do
+          [ -d "$dir" ] || continue
+          ver=$(basename "$dir")
+          printf '<a href="./%s/">%s</a>' "$ver" "$ver" >> public/versions.html
+        done
+        printf '</body></html>' >> public/versions.html
+
+    - uses: actions/configure-pages@v4
+    - uses: actions/upload-pages-artifact@v3
+      with:
+        path: public/
+    - id: deployment
+      uses: actions/deploy-pages@v4
